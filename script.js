@@ -19,9 +19,14 @@
   const toTopButton = document.querySelector("[data-to-top]");
   const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const LIGHTBOX_HISTORY_KEY = "__parentGuideLightbox";
+  const LIGHTBOX_DOUBLE_TAP_DELAY = 320;
+  const LIGHTBOX_DOUBLE_TAP_DISTANCE = 28;
+  const LIGHTBOX_TAP_ZOOM_SCALE = 2.2;
   const mobileTabsRestOffset = 34;
   let tabHintPlayed = false;
   let tabHintTimers = [];
+  let lastLightboxTap = null;
+  let lastLightboxZoomToggleAt = 0;
 
   function escapeHtml(value) {
     return String(value)
@@ -180,6 +185,44 @@
     sectionsRoot.innerHTML = data.sections.map(renderSection).join("");
   }
 
+  function resetLightboxZoom() {
+    lightboxImage.classList.remove("is-zoomed");
+    lightboxImage.style.removeProperty("--lightbox-origin-x");
+    lightboxImage.style.removeProperty("--lightbox-origin-y");
+    lightboxImage.style.removeProperty("--lightbox-scale");
+    lastLightboxTap = null;
+  }
+
+  function setLightboxZoomOrigin(clientX, clientY) {
+    const rect = lightboxImage.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return;
+    }
+
+    const x = Math.min(Math.max(clientX - rect.left, 0), rect.width);
+    const y = Math.min(Math.max(clientY - rect.top, 0), rect.height);
+    lightboxImage.style.setProperty("--lightbox-origin-x", `${(x / rect.width) * 100}%`);
+    lightboxImage.style.setProperty("--lightbox-origin-y", `${(y / rect.height) * 100}%`);
+  }
+
+  function toggleLightboxZoom(clientX, clientY) {
+    if (lightbox.hidden) {
+      return;
+    }
+
+    const isZoomed = lightboxImage.classList.contains("is-zoomed");
+    if (isZoomed) {
+      resetLightboxZoom();
+      lastLightboxZoomToggleAt = window.performance.now();
+      return;
+    }
+
+    setLightboxZoomOrigin(clientX, clientY);
+    lightboxImage.style.setProperty("--lightbox-scale", LIGHTBOX_TAP_ZOOM_SCALE);
+    lightboxImage.classList.add("is-zoomed");
+    lastLightboxZoomToggleAt = window.performance.now();
+  }
+
   function baseHistoryState() {
     return window.history.state && typeof window.history.state === "object" ? window.history.state : {};
   }
@@ -201,6 +244,7 @@
 
   function openLightbox(image, alt, meta, options = {}) {
     const wasHidden = lightbox.hidden;
+    resetLightboxZoom();
     lightboxImage.src = image;
     lightboxImage.alt = alt;
     lightboxMeta.textContent = meta;
@@ -227,6 +271,7 @@
       return;
     }
 
+    resetLightboxZoom();
     lightbox.hidden = true;
     lightboxImage.removeAttribute("src");
     lightboxImage.alt = "";
@@ -405,6 +450,39 @@
       }
     });
 
+    lightboxImage.addEventListener("touchend", (event) => {
+      if (event.changedTouches.length !== 1) {
+        lastLightboxTap = null;
+        return;
+      }
+
+      const touch = event.changedTouches[0];
+      const now = window.performance.now();
+      if (!lastLightboxTap) {
+        lastLightboxTap = { x: touch.clientX, y: touch.clientY, time: now };
+        return;
+      }
+
+      const elapsed = now - lastLightboxTap.time;
+      const distance = Math.hypot(touch.clientX - lastLightboxTap.x, touch.clientY - lastLightboxTap.y);
+      if (elapsed <= LIGHTBOX_DOUBLE_TAP_DELAY && distance <= LIGHTBOX_DOUBLE_TAP_DISTANCE) {
+        event.preventDefault();
+        toggleLightboxZoom(touch.clientX, touch.clientY);
+        lastLightboxTap = null;
+        return;
+      }
+
+      lastLightboxTap = { x: touch.clientX, y: touch.clientY, time: now };
+    });
+
+    lightboxImage.addEventListener("dblclick", (event) => {
+      if (window.performance.now() - lastLightboxZoomToggleAt < 420) {
+        return;
+      }
+      event.preventDefault();
+      toggleLightboxZoom(event.clientX, event.clientY);
+    });
+
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !lightbox.hidden) {
         closeLightbox();
@@ -444,6 +522,9 @@
       syncProgress();
       syncTabsOverflowState();
       syncToTopButton();
+      if (!lightbox.hidden) {
+        resetLightboxZoom();
+      }
       if (!tabHintPlayed && isMobileViewport()) {
         tabsRoot.scrollLeft = getTabsRestOffset();
       }
