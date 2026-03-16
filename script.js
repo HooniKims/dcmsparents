@@ -18,6 +18,7 @@
   const lightboxClose = document.querySelector("[data-lightbox-close]");
   const toTopButton = document.querySelector("[data-to-top]");
   const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const LIGHTBOX_HISTORY_KEY = "__parentGuideLightbox";
   const mobileTabsRestOffset = 34;
   let tabHintPlayed = false;
   let tabHintTimers = [];
@@ -179,20 +180,66 @@
     sectionsRoot.innerHTML = data.sections.map(renderSection).join("");
   }
 
-  function openLightbox(image, alt, meta) {
+  function baseHistoryState() {
+    return window.history.state && typeof window.history.state === "object" ? window.history.state : {};
+  }
+
+  function readLightboxState(state) {
+    if (!state || typeof state !== "object") {
+      return null;
+    }
+    return state[LIGHTBOX_HISTORY_KEY] || null;
+  }
+
+  function writeLightboxState(method, payload) {
+    const nextState = {
+      ...baseHistoryState(),
+      [LIGHTBOX_HISTORY_KEY]: payload,
+    };
+    window.history[method](nextState, "", window.location.href);
+  }
+
+  function openLightbox(image, alt, meta, options = {}) {
+    const wasHidden = lightbox.hidden;
     lightboxImage.src = image;
     lightboxImage.alt = alt;
     lightboxMeta.textContent = meta;
     lightbox.hidden = false;
     document.body.classList.add("lightbox-open");
+
+    if (options.fromHistory) {
+      return;
+    }
+
+    const payload = { image, alt, meta };
+    if (wasHidden) {
+      writeLightboxState("pushState", payload);
+      return;
+    }
+
+    if (readLightboxState(window.history.state)) {
+      writeLightboxState("replaceState", payload);
+    }
   }
 
-  function closeLightbox() {
+  function closeLightbox(options = {}) {
+    if (lightbox.hidden) {
+      return;
+    }
+
     lightbox.hidden = true;
     lightboxImage.removeAttribute("src");
     lightboxImage.alt = "";
     lightboxMeta.textContent = "";
     document.body.classList.remove("lightbox-open");
+
+    if (options.updateHistory === false) {
+      return;
+    }
+
+    if (readLightboxState(window.history.state)) {
+      window.history.back();
+    }
   }
 
   function syncProgress() {
@@ -361,6 +408,20 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !lightbox.hidden) {
         closeLightbox();
+      }
+    });
+
+    window.addEventListener("popstate", (event) => {
+      const lightboxState = readLightboxState(event.state);
+      if (lightboxState) {
+        openLightbox(lightboxState.image, lightboxState.alt, lightboxState.meta, {
+          fromHistory: true,
+        });
+        return;
+      }
+
+      if (!lightbox.hidden) {
+        closeLightbox({ updateHistory: false });
       }
     });
 
